@@ -878,12 +878,8 @@ public class AbstractFlinkServiceTest {
                 0,
                 objectMapper.readValue(
                         responseWithoutHistoryInternal, CheckpointHistoryWrapper.class));
-        try {
-            flinkService.getLastCheckpoint(new JobID(), new Configuration());
-            fail();
-        } catch (UpgradeFailureException dpe) {
-
-        }
+        checkpointOpt = flinkService.getLastCheckpoint(new JobID(), new Configuration());
+        assertTrue(checkpointOpt.isEmpty());
     }
 
     @Test

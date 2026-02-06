@@ -157,7 +157,6 @@ import java.util.stream.Collectors;
 
 import static org.apache.flink.kubernetes.operator.api.status.CommonStatus.MSG_HA_METADATA_NOT_AVAILABLE;
 import static org.apache.flink.kubernetes.operator.api.status.CommonStatus.MSG_JOB_FINISHED_OR_CONFIGMAPS_DELETED;
-import static org.apache.flink.kubernetes.operator.api.status.CommonStatus.MSG_MANUAL_RESTORE_REQUIRED;
 import static org.apache.flink.kubernetes.operator.config.FlinkConfigBuilder.FLINK_VERSION;
 import static org.apache.flink.kubernetes.operator.config.KubernetesOperatorConfigOptions.K8S_OP_CONF_PREFIX;
 import static org.apache.flink.util.ExceptionUtils.findThrowable;
@@ -569,9 +568,11 @@ public abstract class AbstractFlinkService implements FlinkService {
                         .get()
                         .getExternalPointer()
                         .equals(NonPersistentMetadataCheckpointStorageLocation.EXTERNAL_POINTER)) {
-            throw new UpgradeFailureException(
-                    "Latest checkpoint not externally addressable, " + MSG_MANUAL_RESTORE_REQUIRED,
-                    "CheckpointNotFound");
+            LOG.warn(
+                    "Latest checkpoint not externally addressable for job {}, "
+                            + "checkpoint storage is non-persistent (in-memory)",
+                    jobId);
+            return Optional.empty();
         }
         return latestCheckpointOpt.map(
                 pointer ->

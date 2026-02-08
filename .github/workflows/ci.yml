@@ -137,6 +137,7 @@ jobs:
         http-client: [ "okhttp", "jdk", "jetty", "vertx" ]
         java-version: [ "17", "21" ]
     uses: ./.github/workflows/e2e.yaml
+    secrets: inherit
     with:
       java-version: ${{ matrix.java-version }}
       flink-version: "v1_20"
@@ -155,6 +156,7 @@ jobs:
           - "v1_20"
           - "v1_19"
     uses: ./.github/workflows/e2e.yaml
+    secrets: inherit
     with:
       java-version: ${{ matrix.java-version }}
       flink-version: ${{ matrix.flink-version }}
@@ -189,6 +191,7 @@ jobs:
             test: test_dynamic_flink_conf.sh
 
     uses: ./.github/workflows/e2e.yaml
+    secrets: inherit
     with:
       java-version: 17
       flink-version: ${{ matrix.flink-version }}
@@ -225,6 +228,7 @@ jobs:
           - flink-version: v1_19
             test: test_snapshot.sh
     uses: ./.github/workflows/e2e.yaml
+    secrets: inherit
     with:
       java-version: 17
       flink-version: ${{ matrix.flink-version }}

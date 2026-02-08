@@ -18,6 +18,7 @@
 package org.apache.flink.kubernetes.operator.observer.deployment;
 
 import org.apache.flink.api.common.JobID;
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.configuration.PipelineOptionsInternal;
 import org.apache.flink.core.execution.CheckpointType;
@@ -34,12 +35,15 @@ import org.apache.flink.kubernetes.operator.api.status.SnapshotTriggerType;
 import org.apache.flink.kubernetes.operator.config.FlinkConfigManager;
 import org.apache.flink.kubernetes.operator.config.KubernetesOperatorConfigOptions;
 import org.apache.flink.kubernetes.operator.exception.DeploymentFailedException;
+import org.apache.flink.kubernetes.operator.exception.UpgradeFailureException;
 import org.apache.flink.kubernetes.operator.observer.TestObserverAdapter;
 import org.apache.flink.kubernetes.operator.reconciler.ReconciliationUtils;
+import org.apache.flink.kubernetes.operator.service.CheckpointHistoryWrapper;
 import org.apache.flink.kubernetes.operator.utils.EventRecorder;
 import org.apache.flink.kubernetes.operator.utils.FlinkUtils;
 import org.apache.flink.kubernetes.operator.utils.SnapshotUtils;
 import org.apache.flink.runtime.client.JobStatusMessage;
+import org.apache.flink.runtime.state.memory.NonPersistentMetadataCheckpointStorageLocation;
 
 import io.fabric8.kubernetes.api.model.Event;
 import io.fabric8.kubernetes.client.KubernetesClient;
@@ -55,6 +59,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.HashMap;
+import java.util.Optional;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -942,5 +947,53 @@ public class ApplicationObserverTest extends OperatorTestBase {
                         EventRecorder.Reason.CheckpointError.name(),
                         deployment.getMetadata().getNamespace(),
                         "Checkpointing has not been enabled"));
+    }
+
+    /**
+     * Reproduces FLINK-39043: When a batch job with in-memory checkpoint storage reaches FINISHED,
+     * the SnapshotObserver queries the last checkpoint. The checkpoint has {@link
+     * NonPersistentMetadataCheckpointStorageLocation#EXTERNAL_POINTER} as its external pointer,
+     * causing {@link UpgradeFailureException} to be thrown on every reconciliation cycle. This
+     * blocks the reconciler from processing any spec changes.
+     */
+    @Test
+    public void testUpgradeFailureExceptionForFinishedJobWithNonPersistentCheckpoint()
+            throws Exception {
+        Configuration conf =
+                configManager.getDeployConfig(deployment.getMetadata(), deployment.getSpec());
+        flinkService.submitApplicationCluster(deployment.getSpec().getJob(), conf, false);
+        bringToReadyStatus(deployment);
+
+        // Transition the job to FINISHED (simulates a batch job completing)
+        deployment
+                .getStatus()
+                .getJobStatus()
+                .setState(org.apache.flink.api.common.JobStatus.FINISHED);
+        var jobs = flinkService.listJobs();
+        var oldStatus = jobs.get(0).f1;
+        jobs.get(0).f1 =
+                new JobStatusMessage(
+                        oldStatus.getJobId(),
+                        oldStatus.getJobName(),
+                        org.apache.flink.api.common.JobStatus.FINISHED,
+                        oldStatus.getStartTime());
+
+        // Inject checkpoint info with non-persistent external pointer (in-memory checkpoint
+        // storage)
+        flinkService.setCheckpointInfo(
+                Tuple2.of(
+                        Optional.of(
+                                new CheckpointHistoryWrapper.CompletedCheckpointInfo(
+                                        1L,
+                                        NonPersistentMetadataCheckpointStorageLocation
+                                                .EXTERNAL_POINTER,
+                                        System.currentTimeMillis())),
+                        Optional.empty()));
+
+        // Before the fix, every observe() call would throw UpgradeFailureException,
+        // blocking reconciliation forever. After the fix, observe() should succeed
+        // and upgradeSavepointPath should be null (no usable checkpoint).
+        observer.observe(deployment, readyContext);
+        assertNull(deployment.getStatus().getJobStatus().getUpgradeSavepointPath());
     }
 }
